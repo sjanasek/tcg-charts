@@ -14,6 +14,7 @@ export function shouldFire(t, below) {
 async function main() {
   const { default: webpush } = await import("web-push");
   const { WORKER_URL, ALERTS_SECRET, VAPID_PUBLIC, VAPID_PRIVATE } = process.env;
+  if (!WORKER_URL) return console.log("WORKER_URL fehlt, keine Alarme geprüft");
   webpush.setVapidDetails("https://github.com/sjanasek/tcg-charts", VAPID_PUBLIC, VAPID_PRIVATE);
   const subs = await fetch(`${WORKER_URL}/all`, { headers: { authorization: `Bearer ${ALERTS_SECRET}` } }).then((r) => r.json());
   const json = (p) => readFile(`docs/data/${p}`, "utf8").then(JSON.parse);
