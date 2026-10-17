@@ -14,6 +14,12 @@ jobs:
         with:
           node-version: 24
       - run: node build.mjs
+      - run: npm i --no-save web-push && node alerts.mjs
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          VAPID_PUBLIC: ${{ secrets.VAPID_PUBLIC }}
+          VAPID_PRIVATE: ${{ secrets.VAPID_PRIVATE }}
       - run: |
           git config user.name github-actions
           git config user.email github-actions@github.com

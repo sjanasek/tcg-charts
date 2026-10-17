@@ -1,4 +1,4 @@
-const CACHE = "tcg-v1";
+const CACHE = "tcg-v2";
 self.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "index.html", "manifest.json", "icon.svg"]))));
 // Netz zuerst, Cache als Fallback: Kurse bleiben frisch, offline sieht man den letzten Stand.
 self.addEventListener("fetch", (e) => {
@@ -12,4 +12,12 @@ self.addEventListener("fetch", (e) => {
       })
       .catch(() => caches.match(e.request)),
   );
+});
+self.addEventListener("push", (e) => {
+  const d = e.data.json();
+  e.waitUntil(self.registration.showNotification(d.title, { body: d.body, icon: "icon.svg", data: d.url }));
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(clients.openWindow(e.notification.data));
 });

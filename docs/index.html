@@ -40,6 +40,10 @@
   .scanbtn { display: block; background: var(--accent); margin: 16px 0; }
   .scanbtn input { display: none; }
   .center { text-align: center; color: var(--muted); padding: 40px 16px; }
+  .info { display: flex; gap: 14px; margin: 16px 0; align-items: flex-start; }
+  .info img { width: 120px; border-radius: 6px; flex-shrink: 0; }
+  .info p { margin: 0 0 6px; font-size: 14px; }
+  .bell { font-size: 12px; color: var(--accent); }
 </style>
 </head>
 <body>
@@ -53,14 +57,17 @@
 <script type="module">
 const $ = (s) => document.querySelector(s);
 const state = { game: localStorage.game || "pkm", tab: "watch", q: "", range: "m", scan: null };
+const WORKER = "WORKER_URL";
 const store = JSON.parse(localStorage.tcg || '{"fav":[],"watch":[]}'); // Listen von "pkm:123"
+store.alerts ??= {}; // "pkm:123" -> { below, name }
 const save = () => (localStorage.tcg = JSON.stringify(store));
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const eur = (v) => (v == null ? "–" : v.toLocaleString("de-DE", { style: "currency", currency: "EUR" }));
 const pct = (v) => (v == null ? "" : `${v >= 0 ? "+" : ""}${v.toFixed(1).replace(".", ",")} %`);
 
 const cache = {};
-const load = (path) => (cache[path] ??= fetch(`data/${path}`).then((r) => r.json()));
+const load = (path) => (cache[path] ??= fetch(path.startsWith("http") ? path : `data/${path}`).then((r) => r.json()));
+const baseName = (n) => n.split(/ \[| \(/)[0];
 
 async function card(key) {
   const [g, id] = key.split(":");
@@ -70,10 +77,10 @@ async function card(key) {
   const p = hist.p[id] || { t: [] };
   const vals = p.t.filter((v) => v != null);
   const prev = vals.at(-2), cur = vals.at(-1);
-  return { key, g, name: row[1], set: sets[row[2]] || `Set ${row[2]}`, dates: hist.dates, ...p, cur, change: prev && cur ? ((cur - prev) / prev) * 100 : null };
+  return { key, g, id: +id, name: row[1], set: sets[row[2]] || `Set ${row[2]}`, dates: hist.dates, ...p, cur, change: prev && cur ? ((cur - prev) / prev) * 100 : null };
 }
 
-const row = (c) => `<a class="row" href="#${c.key}"><div><b>${esc(c.name)}</b><small>${esc(c.set)}</small></div>
+const row = (c) => `<a class="row" href="#${c.key}"><div><b>${esc(c.name)}</b><small>${esc(c.set)}</small>${store.alerts[c.key] ? `<br><span class="bell">🔔 unter ${eur(store.alerts[c.key].below)}</span>` : ""}</div>
   <div class="right"><b>${eur(c.cur)}</b><small class="${c.change >= 0 ? "up" : "down"}">${pct(c.change)}</small></div></a>`;
 
 async function list(keys, empty) {
@@ -94,11 +101,38 @@ function chart(dates, t, range) {
     <div class="axis"><span>${fmt(pts[0][0])}</span><span>${fmt(pts.at(-1)[0])}</span></div>`;
 }
 
+// Kartenbild und Details: Yu-Gi-Oh über den exakten Namen bei YGOPRODeck, Pokémon über TCGdex (kennt die Cardmarket-Produkt-ID).
+async function loadInfo(c) {
+  if (c.g === "ygo") {
+    const d = (await load(`https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(c.name)}`)).data?.[0];
+    if (!d) return "";
+    const rarity = d.card_sets?.find((s) => s.set_name.toLowerCase() === c.set.toLowerCase())?.set_rarity;
+    const stats = d.atk != null ? `ATK ${d.atk} / DEF ${d.def ?? "–"} · ${d.attribute}${d.level ? ` · Level ${d.level}` : ""}` : "";
+    return `<div class="info"><img src="${d.card_images[0].image_url}" alt=""><div><p class="muted">${esc(d.humanReadableCardType || d.type)}${rarity ? ` · ${esc(rarity)}` : ""}</p>
+      ${stats ? `<p class="muted">${esc(stats)}</p>` : ""}<p>${esc(d.desc)}</p></div></div>`;
+  }
+  const [cards, sets] = await Promise.all([load(`https://api.tcgdex.net/v2/en/cards?name=${encodeURIComponent(baseName(c.name))}`), load("https://api.tcgdex.net/v2/en/sets")]);
+  const setName = Object.fromEntries(sets.map((s) => [s.id, s.name.toLowerCase()]));
+  const inSet = cards.filter((k) => setName[k.id.slice(0, k.id.lastIndexOf("-"))] === c.set.toLowerCase());
+  const candidates = (inSet.length ? inSet : cards).slice(0, 8);
+  const details = await Promise.all(candidates.map((k) => load(`https://api.tcgdex.net/v2/en/cards/${k.id}`).catch(() => null)));
+  const d = details.find((k) => k?.variants_detailed?.some((v) => v.thirdParty?.cardmarket === c.id))
+    || details.find((k) => k && k.name === baseName(c.name) && (k.attacks || []).every((a) => c.name.includes(a.name)))
+    || (inSet.length ? details[0] : null);
+  if (!d) return "";
+  const attacks = (d.attacks || []).map((a) => `${esc(a.name)}${a.damage ? ` (${esc(a.damage)})` : ""}`).join(", ");
+  return `<div class="info"><img src="${d.image}/high.webp" alt=""><div>
+    <p class="muted">${esc([d.rarity, d.hp && `${d.hp} HP`, d.types?.join("/")].filter(Boolean).join(" · "))}</p>
+    ${attacks ? `<p>${attacks}</p>` : ""}${d.illustrator ? `<p class="muted">Illustration: ${esc(d.illustrator)}</p>` : ""}</div></div>`;
+}
+
 async function detail(key) {
   const c = await card(key);
   if (!c) return `<p class="center">Karte nicht gefunden.</p>`;
   const inList = (l) => store[l].includes(key);
+  const alert = store.alerts[key];
   const cm = `https://www.cardmarket.com/de/${c.g === "pkm" ? "Pokemon" : "YuGiOh"}/Products/Search?searchString=${encodeURIComponent(c.name)}`;
+  loadInfo(c).then((html) => { const el = $("#info"); if (el && location.hash.slice(1) === key) el.innerHTML = html; }, () => {});
   return `<a class="back" href="#">‹ Zurück</a>
     <small class="muted">${esc(c.set)}</small><h2 style="margin:0">${esc(c.name)}</h2>
     <p class="price">${eur(c.cur)} <small class="${c.change >= 0 ? "up" : "down"}" style="font-size:16px">${pct(c.change)}</small></p>
@@ -106,14 +140,18 @@ async function detail(key) {
     ${chart(c.dates, c.t, state.range)}
     <div class="stats"><div><small>Ø 1 Tag</small>${eur(c.avg1)}</div><div><small>Ø 7 Tage</small>${eur(c.avg7)}</div><div><small>Ø 30 Tage</small>${eur(c.avg30)}</div><div><small>Günstigster</small>${eur(c.low)}</div></div>
     <div class="actions"><button data-list="fav" class="${inList("fav") ? "on" : ""}">★ Favorit</button><button data-list="watch" class="${inList("watch") ? "on" : ""}">👁 Watchlist</button></div>
+    <div class="actions"><button data-alert class="${alert ? "on" : ""}">🔔 ${alert ? `Buy Alert unter ${eur(alert.below)}` : "Buy Alert setzen"}</button></div>
+    <div id="info"></div>
     <div class="actions"><a href="${cm}" target="_blank" rel="noopener">Auf Cardmarket ansehen</a></div>`;
 }
 
 async function search() {
   let results = "";
   if (state.q.length >= 2) {
-    const q = state.q.toLowerCase();
-    const keys = (await load(`${state.game}/index.json`)).filter((r) => r[1].toLowerCase().includes(q)).slice(0, 30).map((r) => `${state.game}:${r[0]}`);
+    const words = state.q.toLowerCase().split(/\s+/).filter(Boolean);
+    const [index, sets] = await Promise.all([load(`${state.game}/index.json`), load(`${state.game}/sets.json`)]);
+    const keys = index.filter((r) => { const hay = `${r[1]} ${sets[r[2]] || ""}`.toLowerCase(); return words.every((w) => hay.includes(w)); })
+      .slice(0, 30).map((r) => `${state.game}:${r[0]}`);
     results = await list(keys, "Keine Karte gefunden.");
   }
   return `<input type="search" id="q" placeholder="Karte suchen …" value="${esc(state.q)}" autofocus>${results}`;
@@ -167,9 +205,33 @@ $("#view").onchange = async (e) => {
   catch (err) { state.scan = []; console.error(err); }
   render();
 };
+// Push-Abo anlegen (einmalig) und alle Alarme an den Worker schicken.
+async function syncAlerts() {
+  if (WORKER === "WORKER_URL") throw new Error("Push ist noch nicht eingerichtet, der Alarm ist nur in der App gespeichert.");
+  if (!("PushManager" in window)) throw new Error("Push geht hier nicht. Auf dem iPhone: App zum Home-Bildschirm hinzufügen und von dort öffnen.");
+  if ((await Notification.requestPermission()) !== "granted") throw new Error("Mitteilungen sind für diese App nicht erlaubt.");
+  const reg = await navigator.serviceWorker.ready;
+  const vapid = await fetch(`${WORKER}/vapid`).then((r) => r.text());
+  const key = Uint8Array.from(atob(vapid.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0));
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+  const r = await fetch(`${WORKER}/subscribe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sub, alerts: store.alerts }) });
+  if (!r.ok) throw new Error("Alarm konnte nicht gespeichert werden.");
+}
+
+async function setAlert(key) {
+  const c = await card(key);
+  const v = prompt(`Buy Alert für ${c.name}\nAktuell ${eur(c.cur)}. Benachrichtigen, wenn der Kurs fällt unter (€):`, store.alerts[key]?.below ?? "");
+  if (v === null) return;
+  const below = parseFloat(v.replace(",", "."));
+  if (below > 0) store.alerts[key] = { below, name: c.name }; else delete store.alerts[key];
+  save(); render();
+  try { await syncAlerts(); } catch (e) { alert(e.message); }
+}
+
 $("#view").onclick = (e) => {
   const b = e.target.closest("button");
   if (!b) return;
+  if ("alert" in b.dataset) setAlert(location.hash.slice(1));
   if (b.dataset.range) { state.range = b.dataset.range; render(); }
   if (b.dataset.list) {
     const l = store[b.dataset.list], key = location.hash.slice(1), i = l.indexOf(key);
