@@ -57,7 +57,7 @@
 <script type="module">
 const $ = (s) => document.querySelector(s);
 const state = { game: localStorage.game || "pkm", tab: "watch", q: "", range: "m", scan: null };
-const WORKER = "WORKER_URL";
+const WORKER = "https://tcg-alerts.sjanasek.workers.dev";
 const store = JSON.parse(localStorage.tcg || '{"fav":[],"watch":[]}'); // Listen von "pkm:123"
 store.alerts ??= {}; // "pkm:123" -> { below, name }
 const save = () => (localStorage.tcg = JSON.stringify(store));
