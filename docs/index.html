@@ -111,18 +111,24 @@ async function loadInfo(c) {
     return `<div class="info"><img src="${d.card_images[0].image_url}" alt=""><div><p class="muted">${esc(d.humanReadableCardType || d.type)}${rarity ? ` · ${esc(rarity)}` : ""}</p>
       ${stats ? `<p class="muted">${esc(stats)}</p>` : ""}<p>${esc(d.desc)}</p></div></div>`;
   }
+  // Nur eine eindeutige Zuordnung zählt: gleiche Cardmarket-ID, sonst gleicher Name + alle Attacken im Cardmarket-Namen (+ gleiches Set bei Karten ohne Attacken). Lieber kein Bild als ein falsches.
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const [cards, sets] = await Promise.all([load(`https://api.tcgdex.net/v2/en/cards?name=${encodeURIComponent(baseName(c.name))}`), load("https://api.tcgdex.net/v2/en/sets")]);
   const setName = Object.fromEntries(sets.map((s) => [s.id, s.name.toLowerCase()]));
-  const inSet = cards.filter((k) => setName[k.id.slice(0, k.id.lastIndexOf("-"))] === c.set.toLowerCase());
-  const candidates = (inSet.length ? inSet : cards).slice(0, 8);
-  const details = await Promise.all(candidates.map((k) => load(`https://api.tcgdex.net/v2/en/cards/${k.id}`).catch(() => null)));
-  const d = details.find((k) => k?.variants_detailed?.some((v) => v.thirdParty?.cardmarket === c.id))
-    || details.find((k) => k && k.name === baseName(c.name) && (k.attacks || []).every((a) => c.name.includes(a.name)))
-    || (inSet.length ? details[0] : null);
+  const setOf = (k) => setName[k.id.slice(0, k.id.lastIndexOf("-"))] || "";
+  const cmSet = c.set.toLowerCase(), firstWord = cmSet.split(" ")[0];
+  const score = (k) => (setOf(k) === cmSet ? 2 : setOf(k).includes(firstWord) ? 1 : 0);
+  const candidates = cards.filter((k) => norm(k.name) === norm(baseName(c.name))).sort((a, b) => score(b) - score(a));
+  const fits = (k) => k && setOf(k) === cmSet && (k.attacks || []).every((a) => norm(c.name).includes(norm(a.name)));
+  let d = null;
+  for (let i = 0; i < candidates.length && !d; i += 8) {
+    const details = await Promise.all(candidates.slice(i, i + 8).map((k) => load(`https://api.tcgdex.net/v2/en/cards/${k.id}`).catch(() => null)));
+    d = details.find((k) => k?.variants_detailed?.some((v) => v.thirdParty?.cardmarket === c.id)) || details.find(fits);
+  }
   if (!d) return "";
   const attacks = (d.attacks || []).map((a) => `${esc(a.name)}${a.damage ? ` (${esc(a.damage)})` : ""}`).join(", ");
-  return `<div class="info"><img src="${d.image}/high.webp" alt=""><div>
-    <p class="muted">${esc([d.rarity, d.hp && `${d.hp} HP`, d.types?.join("/")].filter(Boolean).join(" · "))}</p>
+  return `<div class="info">${d.image ? `<img src="${d.image}/high.webp" alt="">` : ""}<div>
+    <p class="muted">${esc([d.rarity !== "None" && d.rarity, d.hp && `${d.hp} HP`, d.types?.join("/")].filter(Boolean).join(" · "))}</p>
     ${attacks ? `<p>${attacks}</p>` : ""}${d.illustrator ? `<p class="muted">Illustration: ${esc(d.illustrator)}</p>` : ""}</div></div>`;
 }
 
