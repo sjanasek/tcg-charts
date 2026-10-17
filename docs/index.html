@@ -114,9 +114,10 @@ async function loadInfo(c) {
   // Nur eine eindeutige Zuordnung zählt: gleiche Cardmarket-ID, sonst gleicher Name + alle Attacken im Cardmarket-Namen (+ gleiches Set bei Karten ohne Attacken). Lieber kein Bild als ein falsches.
   const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const [cards, sets] = await Promise.all([load(`https://api.tcgdex.net/v2/en/cards?name=${encodeURIComponent(baseName(c.name))}`), load("https://api.tcgdex.net/v2/en/sets")]);
-  const setName = Object.fromEntries(sets.map((s) => [s.id, s.name.toLowerCase()]));
+  const normSet = (s) => norm(s.replace(/^EX /, "").replace(/&/g, "and")); // "EX Ruby & Sapphire" (Cardmarket) = "Ruby & Sapphire" (TCGdex)
+  const setName = Object.fromEntries(sets.map((s) => [s.id, normSet(s.name)]));
   const setOf = (k) => setName[k.id.slice(0, k.id.lastIndexOf("-"))] || "";
-  const cmSet = c.set.toLowerCase(), firstWord = cmSet.split(" ")[0];
+  const cmSet = normSet(c.set), firstWord = norm(c.set.split(" ")[0]);
   const score = (k) => (setOf(k) === cmSet ? 2 : setOf(k).includes(firstWord) ? 1 : 0);
   const candidates = cards.filter((k) => norm(k.name) === norm(baseName(c.name))).sort((a, b) => score(b) - score(a));
   const fits = (k) => k && setOf(k) === cmSet && (k.attacks || []).every((a) => norm(c.name).includes(norm(a.name)));
