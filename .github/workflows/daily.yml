@@ -1,0 +1,22 @@
+name: Tägliche Kurse
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node build.mjs
+      - run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add docs/data
+          git commit -m "Kurse $(date -u +%F)" || echo "keine Änderung"
+          git push

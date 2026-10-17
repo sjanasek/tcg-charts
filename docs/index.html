@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TCG Kurse</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<meta name="theme-color" content="#0d0f14">
+<style>
+  :root { --bg: #0d0f14; --card: #171a22; --text: #f2f3f5; --muted: #8b93a3; --up: #2ecc71; --down: #ff4d4f; --accent: #4f8cff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 -apple-system, system-ui, sans-serif; padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  header { padding: calc(12px + env(safe-area-inset-top)) 16px 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  .seg { display: flex; background: var(--card); border-radius: 10px; padding: 3px; }
+  .seg button { background: none; border: 0; color: var(--muted); padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+  .seg button.on { background: #2a2f3b; color: var(--text); }
+  main { padding: 0 16px; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #22262f; color: inherit; text-decoration: none; gap: 12px; }
+  .row b, .right b { display: block; font-weight: 600; }
+  .row small, .muted { color: var(--muted); font-size: 13px; }
+  .right { text-align: right; flex-shrink: 0; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  input[type=search] { width: 100%; padding: 12px; border-radius: 12px; border: 0; background: var(--card); color: var(--text); font-size: 16px; margin: 8px 0; }
+  nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--card); padding: 6px 0 calc(6px + env(safe-area-inset-bottom)); }
+  nav button { flex: 1; background: none; border: 0; color: var(--muted); font-size: 12px; padding: 8px 0; }
+  nav button.on { color: var(--accent); }
+  .price { font-size: 32px; font-weight: 700; margin: 4px 0 0; }
+  svg.chart { width: 100%; height: 140px; margin: 12px 0 4px; }
+  svg.chart path { fill: none; stroke-width: 2.5; stroke: var(--up); } svg.chart.down path { stroke: var(--down); }
+  .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0; }
+  .stats div { background: var(--card); border-radius: 10px; padding: 8px; text-align: center; }
+  .stats small { display: block; color: var(--muted); font-size: 11px; }
+  .actions { display: flex; gap: 8px; margin: 12px 0; }
+  .actions button, .actions a, .back, .scanbtn { flex: 1; padding: 12px; border-radius: 12px; border: 0; background: var(--card); color: var(--text); font-size: 15px; text-align: center; text-decoration: none; }
+  .actions .on { background: var(--accent); }
+  .back { display: inline-block; flex: none; padding: 8px 14px; margin: 8px 0; }
+  .scanbtn { display: block; background: var(--accent); margin: 16px 0; }
+  .scanbtn input { display: none; }
+  .center { text-align: center; color: var(--muted); padding: 40px 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TCG Kurse</h1>
+  <div class="seg" id="games"><button data-game="pkm">Pokémon</button><button data-game="ygo">Yu-Gi-Oh!</button></div>
+</header>
+<main id="view"></main>
+<nav id="tabs"><button data-tab="watch">Watchlist</button><button data-tab="fav">Favoriten</button><button data-tab="search">Suche</button><button data-tab="scan">Scan</button></nav>
+
+<script type="module">
+const $ = (s) => document.querySelector(s);
+const state = { game: localStorage.game || "pkm", tab: "watch", q: "", range: "m", scan: null };
+const store = JSON.parse(localStorage.tcg || '{"fav":[],"watch":[]}'); // Listen von "pkm:123"
+const save = () => (localStorage.tcg = JSON.stringify(store));
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const eur = (v) => (v == null ? "–" : v.toLocaleString("de-DE", { style: "currency", currency: "EUR" }));
+const pct = (v) => (v == null ? "" : `${v >= 0 ? "+" : ""}${v.toFixed(1).replace(".", ",")} %`);
+
+const cache = {};
+const load = (path) => (cache[path] ??= fetch(`data/${path}`).then((r) => r.json()));
+
+async function card(key) {
+  const [g, id] = key.split(":");
+  const row = (await load(`${g}/index.json`)).find((r) => r[0] == id);
+  if (!row) return null;
+  const [hist, sets] = await Promise.all([load(`${g}/hist/${row[2]}.json`), load(`${g}/sets.json`)]);
+  const p = hist.p[id] || { t: [] };
+  const vals = p.t.filter((v) => v != null);
+  const prev = vals.at(-2), cur = vals.at(-1);
+  return { key, g, name: row[1], set: sets[row[2]] || `Set ${row[2]}`, dates: hist.dates, ...p, cur, change: prev && cur ? ((cur - prev) / prev) * 100 : null };
+}
+
+const row = (c) => `<a class="row" href="#${c.key}"><div><b>${esc(c.name)}</b><small>${esc(c.set)}</small></div>
+  <div class="right"><b>${eur(c.cur)}</b><small class="${c.change >= 0 ? "up" : "down"}">${pct(c.change)}</small></div></a>`;
+
+async function list(keys, empty) {
+  const cards = (await Promise.all(keys.map(card))).filter(Boolean);
+  return cards.length ? cards.map(row).join("") : `<p class="center">${empty}</p>`;
+}
+
+function chart(dates, t, range) {
+  const n = { w: 7, m: 30, a: Infinity }[range];
+  const pts = dates.map((d, i) => [d, t[i]]).filter((p) => p[1] != null).slice(-n);
+  if (pts.length < 2) return `<p class="muted">Noch zu wenig Daten für einen Chart.</p>`;
+  const vs = pts.map((p) => p[1]), min = Math.min(...vs), max = Math.max(...vs), W = 320, H = 140;
+  const x = (i) => (i / (pts.length - 1)) * W;
+  const y = (v) => (max === min ? H / 2 : H - 6 - ((v - min) / (max - min)) * (H - 12));
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  const fmt = (s) => new Date(s).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+  return `<svg class="chart ${vs.at(-1) >= vs[0] ? "up" : "down"}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${d}"/></svg>
+    <div class="axis"><span>${fmt(pts[0][0])}</span><span>${fmt(pts.at(-1)[0])}</span></div>`;
+}
+
+async function detail(key) {
+  const c = await card(key);
+  if (!c) return `<p class="center">Karte nicht gefunden.</p>`;
+  const inList = (l) => store[l].includes(key);
+  const cm = `https://www.cardmarket.com/de/${c.g === "pkm" ? "Pokemon" : "YuGiOh"}/Products/Search?searchString=${encodeURIComponent(c.name)}`;
+  return `<a class="back" href="#">‹ Zurück</a>
+    <small class="muted">${esc(c.set)}</small><h2 style="margin:0">${esc(c.name)}</h2>
+    <p class="price">${eur(c.cur)} <small class="${c.change >= 0 ? "up" : "down"}" style="font-size:16px">${pct(c.change)}</small></p>
+    <div class="seg" style="display:inline-flex" id="range">${["w", "m", "a"].map((r) => `<button data-range="${r}" class="${state.range === r ? "on" : ""}">${{ w: "1W", m: "1M", a: "Alles" }[r]}</button>`).join("")}</div>
+    ${chart(c.dates, c.t, state.range)}
+    <div class="stats"><div><small>Ø 1 Tag</small>${eur(c.avg1)}</div><div><small>Ø 7 Tage</small>${eur(c.avg7)}</div><div><small>Ø 30 Tage</small>${eur(c.avg30)}</div><div><small>Günstigster</small>${eur(c.low)}</div></div>
+    <div class="actions"><button data-list="fav" class="${inList("fav") ? "on" : ""}">★ Favorit</button><button data-list="watch" class="${inList("watch") ? "on" : ""}">👁 Watchlist</button></div>
+    <div class="actions"><a href="${cm}" target="_blank" rel="noopener">Auf Cardmarket ansehen</a></div>`;
+}
+
+async function search() {
+  let results = "";
+  if (state.q.length >= 2) {
+    const q = state.q.toLowerCase();
+    const keys = (await load(`${state.game}/index.json`)).filter((r) => r[1].toLowerCase().includes(q)).slice(0, 30).map((r) => `${state.game}:${r[0]}`);
+    results = await list(keys, "Keine Karte gefunden.");
+  }
+  return `<input type="search" id="q" placeholder="Karte suchen …" value="${esc(state.q)}" autofocus>${results}`;
+}
+
+// Scan: OCR per Tesseract.js; Yu-Gi-Oh über den 8-stelligen Code, sonst über den längsten Kartennamen, der im Text vorkommt.
+async function identify(file) {
+  const { default: Tesseract } = await import("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.esm.min.js");
+  const { data } = await Tesseract.recognize(file, "eng");
+  const text = data.text.toLowerCase();
+  const index = await load(`${state.game}/index.json`);
+  const code = state.game === "ygo" && text.match(/\b\d{8}\b/);
+  if (code) {
+    const r = await fetch(`https://db.ygoprodeck.com/api/v7/cardinfo.php?id=${code[0]}`).then((r) => r.json()).catch(() => null);
+    const name = r?.data?.[0]?.name.toLowerCase();
+    if (name) return index.filter((r) => r[1].toLowerCase() === name);
+  }
+  const baseName = (n) => n.split(/ \[| \(/)[0].toLowerCase();
+  const names = [...new Set(index.map((r) => baseName(r[1])))].filter((n) => n.length >= 4 && text.includes(n));
+  const best = names.sort((a, b) => b.length - a.length)[0];
+  return best ? index.filter((r) => baseName(r[1]) === best) : [];
+}
+
+async function scan() {
+  const picker = `<label class="scanbtn">📷 Karte fotografieren<input type="file" accept="image/*" capture="environment" id="file"></label>`;
+  if (state.scan === "busy") return `<p class="center">Erkenne Karte …</p>`;
+  if (state.scan) return `${picker}<p class="muted">Welches Set ist es?</p>${await list(state.scan, "Keine Karte erkannt. Bitte näher und gerade fotografieren.")}`;
+  return `${picker}<p class="center">Fotografiere die Karte von vorne, gut beleuchtet.</p>`;
+}
+
+async function render() {
+  const key = location.hash.slice(1);
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === state.tab));
+  document.querySelectorAll("#games button").forEach((b) => b.classList.toggle("on", b.dataset.game === state.game));
+  const html = key.includes(":") ? detail(key)
+    : state.tab === "search" ? search()
+    : state.tab === "scan" ? scan()
+    : list(store[state.tab].filter((k) => k.startsWith(state.game)), state.tab === "watch" ? "Noch nichts auf der Watchlist. Suche eine Karte und tippe auf 👁." : "Noch keine Favoriten. Suche eine Karte und tippe auf ★.");
+  $("#view").innerHTML = await html.catch((e) => `<p class="center">Fehler: ${esc(e.message)}</p>`);
+  if (state.tab === "search" && !key) { const q = $("#q"); q?.focus(); q?.setSelectionRange(q.value.length, q.value.length); }
+}
+
+$("#tabs").onclick = (e) => { if (e.target.dataset.tab) { state.tab = e.target.dataset.tab; location.hash = ""; render(); } };
+$("#games").onclick = (e) => { if (e.target.dataset.game) { state.game = localStorage.game = e.target.dataset.game; state.scan = null; render(); } };
+$("#view").oninput = (e) => { if (e.target.id === "q") { state.q = e.target.value; render(); } };
+$("#view").onchange = async (e) => {
+  if (e.target.id !== "file" || !e.target.files[0]) return;
+  const file = e.target.files[0];
+  state.scan = "busy"; render();
+  try { state.scan = (await identify(file)).map((r) => `${state.game}:${r[0]}`); }
+  catch (err) { state.scan = []; console.error(err); }
+  render();
+};
+$("#view").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.range) { state.range = b.dataset.range; render(); }
+  if (b.dataset.list) {
+    const l = store[b.dataset.list], key = location.hash.slice(1), i = l.indexOf(key);
+    i === -1 ? l.push(key) : l.splice(i, 1);
+    save(); render();
+  }
+};
+window.onhashchange = render;
+render();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+</script>
+</body>
+</html>
