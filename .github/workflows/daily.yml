@@ -14,6 +14,8 @@ jobs:
         with:
           node-version: 24
       - run: node build.mjs
+      - run: node deals.mjs
+        continue-on-error: true # Prospekt-Scan darf die Kurse nicht blockieren
       - run: npm i --no-save web-push && node alerts.mjs
         env:
           WORKER_URL: ${{ vars.WORKER_URL }}

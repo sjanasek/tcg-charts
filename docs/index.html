@@ -52,7 +52,7 @@
   <div class="seg" id="games"><button data-game="pkm">Pokémon</button><button data-game="ygo">Yu-Gi-Oh!</button></div>
 </header>
 <main id="view"></main>
-<nav id="tabs"><button data-tab="watch">Watchlist</button><button data-tab="fav">Favoriten</button><button data-tab="search">Suche</button><button data-tab="scan">Scan</button></nav>
+<nav id="tabs"><button data-tab="watch">Watchlist</button><button data-tab="fav">Favoriten</button><button data-tab="search">Suche</button><button data-tab="scan">Scan</button><button data-tab="deals">Angebote</button></nav>
 
 <script type="module">
 const $ = (s) => document.querySelector(s);
@@ -189,6 +189,24 @@ async function scan() {
   return `${picker}<p class="center">Fotografiere die Karte von vorne, gut beleuchtet.</p>`;
 }
 
+// Angebote: deals.json kommt täglich aus deals.mjs. Bundesweite Angebote (plz null) passen immer, regionale nur zum PLZ-Präfix.
+const matchesPlz = (d, plz) => !d.plz || d.plz.some((p) => plz.startsWith(p));
+async function deals() {
+  const plz = localStorage.plz || "", merch = localStorage.merch === "1";
+  const data = await load("deals.json").catch(() => null);
+  const head = `<input type="search" inputmode="numeric" maxlength="5" id="plz" placeholder="Postleitzahl, z. B. 20249" value="${esc(plz)}">
+    <label class="muted"><input type="checkbox" id="merch" ${merch ? "checked" : ""}> auch Merchandise (Plüsch, Bettwäsche …)</label>`;
+  if (!data) return `${head}<p class="center">Noch keine Angebote geladen.</p>`;
+  const today = new Date().toISOString().slice(0, 10);
+  const fmt = (s) => new Date(s).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" });
+  const hits = data.deals.filter((d) => (merch || d.kind === "karten") && (plz.length < 2 || matchesPlz(d, plz)));
+  const rows = hits.map((d) => `<a class="row" href="${esc(d.url || "#")}" target="_blank" rel="noopener"><div><b>${esc(d.title)}</b>
+    <small>${esc(d.retailer)}${d.plz ? " · regional" : ""}</small><br><small class="${d.from <= today ? "up" : "muted"}">${d.from <= today ? "läuft bis" : "ab"} ${fmt(d.from <= today ? d.to : d.from)}</small></div>
+    <div class="right"><b>${d.price != null ? eur(d.price) : ""}</b></div></a>`).join("");
+  return `${head}${rows || `<p class="center">Keine Pokémon-Angebote in den nächsten zwei Wochen${plz.length >= 2 ? " für diese PLZ" : ""}.</p>`}
+    <p class="muted">Stand ${fmt(data.updated)} – ein Prospektangebot heißt nicht, dass jede Filiale die Ware vorrätig hat.</p>`;
+}
+
 async function render() {
   const key = location.hash.slice(1);
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === state.tab));
@@ -196,6 +214,7 @@ async function render() {
   const html = key.includes(":") ? detail(key)
     : state.tab === "search" ? search()
     : state.tab === "scan" ? scan()
+    : state.tab === "deals" ? deals()
     : list(store[state.tab].filter((k) => k.startsWith(state.game)), state.tab === "watch" ? "Noch nichts auf der Watchlist. Suche eine Karte und tippe auf 👁." : "Noch keine Favoriten. Suche eine Karte und tippe auf ★.");
   $("#view").innerHTML = await html.catch((e) => `<p class="center">Fehler: ${esc(e.message)}</p>`);
   if (state.tab === "search" && !key) { const q = $("#q"); q?.focus(); q?.setSelectionRange(q.value.length, q.value.length); }
@@ -203,8 +222,12 @@ async function render() {
 
 $("#tabs").onclick = (e) => { if (e.target.dataset.tab) { state.tab = e.target.dataset.tab; location.hash = ""; render(); } };
 $("#games").onclick = (e) => { if (e.target.dataset.game) { state.game = localStorage.game = e.target.dataset.game; state.scan = null; render(); } };
-$("#view").oninput = (e) => { if (e.target.id === "q") { state.q = e.target.value; render(); } };
+$("#view").oninput = (e) => {
+  if (e.target.id === "q") { state.q = e.target.value; render(); }
+  if (e.target.id === "plz") { localStorage.plz = e.target.value.replace(/\D/g, ""); if (localStorage.plz.length === 5 || !localStorage.plz) render().then(() => $("#plz")?.focus()); }
+};
 $("#view").onchange = async (e) => {
+  if (e.target.id === "merch") { localStorage.merch = e.target.checked ? "1" : "0"; return render(); }
   if (e.target.id !== "file" || !e.target.files[0]) return;
   const file = e.target.files[0];
   state.scan = "busy"; render();
