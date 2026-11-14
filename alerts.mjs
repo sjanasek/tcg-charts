@@ -12,7 +12,8 @@ export function shouldFire(t, below) {
 }
 
 async function main() {
-  const { default: webpush } = await import("web-push");
+  const m = await import("web-push");
+  const webpush = m.default ?? m; // v4 ist reines ESM ohne Default-Export, v3 (CJS) hatte nur den Default
   const { WORKER_URL, ALERTS_SECRET, VAPID_PUBLIC, VAPID_PRIVATE } = process.env;
   if (!WORKER_URL) return console.log("WORKER_URL fehlt, keine Alarme geprüft");
   webpush.setVapidDetails("https://github.com/sjanasek/tcg-charts", VAPID_PUBLIC, VAPID_PRIVATE);
